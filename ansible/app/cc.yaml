@@ -1,0 +1,138 @@
+---
+- name: "Consensus Client Deployment"
+  hosts: all
+  become: yes
+
+  #################################################################
+  #region: Variables
+  vars:
+    ec_dir: "{{ ec_dir }}"
+    cc_dir: "{{ cc_dir }}"
+
+    ec_data_dir: "{{ ec_dir }}/data"
+
+    cc_data_dir: "{{ cc_dir }}/data"
+    cc_data_dir_1: "{{ cc_data_dir }}/1"
+    cc_data_dir_2: "{{ cc_data_dir }}/2"
+    cc_config_dir: "{{ cc_dir }}/config"
+
+  tasks:
+    #################################################################
+    #region:  Deploy CC Container 1
+
+    - name: Stop and remove existing Consensus Client 1 Container
+      docker_container:
+        name: cc1
+        state: absent
+
+    - name: Deploy Consensus Client Container
+      docker_container:
+        name: cc1
+        image: "chainsafe/lodestar:{{app.docker.cc.image_tag}}"
+        network_mode: host
+        command: [
+            beacon,
+            "--execution.urls=http://{{ inventory_hostname }}:8551",
+            --jwt-secret="/usr/app/jwtsecret",
+            --dataDir="/usr/app/data",
+            --paramsFile="/usr/app/config.yaml",
+            --genesisStateFile="/usr/app/genesis.ssz",
+            --metrics=true,
+            --metrics.port=5054,
+            --metrics.address="0.0.0.0",
+            --rest=true,
+            --rest.cors='*',
+            "--rest.address={{ inventory_hostname }}",
+            --rest.port=5052,
+            --port=9000,
+            "--rest.namespace='*'",
+            # "--rest.namespace='beacon,config,events,node,validator,lightclient,debug'",
+            --network.allowPublishToZeroPeers=true,
+            "--enr.ip='127.0.0.1'",
+            # "--enr.ip {{ inventory_hostname }}",
+            # --data-storage-mode=ARCHIVE,
+            # --suggestedFeeRecipient="0xCaA29806044A08E533963b2e573C1230A2cd9a2d",
+            # --metrics-host-allowlist=*,
+          ]
+        user: "0:0"
+        restart_policy: always
+        ports:
+          - "0.0.0.0:9000:9000"
+          - "0.0.0.0:5052:5052"
+          - "0.0.0.0:5054:5054"
+        volumes:
+          - "{{ cc_config_dir }}/genesis.ssz:/usr/app/genesis.ssz"
+          - "{{ cc_config_dir }}/config.yaml:/usr/app/config.yaml"
+          - "{{ cc_data_dir_1 }}:/usr/app/data"
+          - "{{ ec_data_dir }}/jwtsecret:/usr/app/jwtsecret:ro"
+
+    #endregion
+    #################################################################
+    #region:  Deploy CC Container 2
+
+    ## A second CC is required for Loadstar to function
+
+    - name: Pause for 15 seconds
+      pause:
+        seconds: 15
+
+    - name: Get ENR of cc1
+      shell: |
+        curl http://{{ inventory_hostname }}:5052/eth/v1/node/identity | grep -o '"enr":"[^"]*' | sed 's/"enr":"//'
+      register: cc1_enr
+
+    - name: Print ENR of cc1
+      debug:
+        msg: "{{ cc1_enr.stdout }}"
+
+    - name: Stop and remove existing Consensus Client 2 Container
+      docker_container:
+        name: cc2
+        state: absent
+
+    - name: Deploy Consensus Client Container
+      docker_container:
+        name: cc2
+        image: "chainsafe/lodestar:{{app.docker.cc.image_tag}}"
+        network_mode: host
+        command: [
+            beacon,
+            "--execution.urls=http://{{ inventory_hostname }}:8551",
+            --jwt-secret="/usr/app/jwtsecret",
+            --dataDir="/usr/app/data",
+            --paramsFile="/usr/app/config.yaml",
+            --genesisStateFile="/usr/app/genesis.ssz",
+            --metrics=true,
+            --metrics.port=5055,
+            --metrics.address="0.0.0.0",
+            --rest=true,
+            --rest.cors='*',
+            "--rest.address={{ inventory_hostname }}",
+            --rest.port=5053,
+            --port=9001,
+            "--rest.namespace='*'",
+            # "--rest.namespace='beacon,config,events,node,validator,lightclient'",
+            --network.allowPublishToZeroPeers=true,
+            "--enr.ip='127.0.0.1'",
+            --network.connectToDiscv5Bootnodes=true,
+            --network.allowPublishToZeroPeers=true,
+            "--bootnodes={{ cc1_enr.stdout }}",
+            # "--enr.ip {{ inventory_hostname }}",
+            # --data-storage-mode=ARCHIVE,
+            # --suggestedFeeRecipient="0xCaA29806044A08E533963b2e573C1230A2cd9a2d",
+            # --metrics-host-allowlist=*,
+          ]
+        user: "0:0"
+        restart_policy: always
+        ports:
+          - "0.0.0.0:9001:9001"
+          - "0.0.0.0:5053:5053"
+          - "0.0.0.0:5055:5055"
+        volumes:
+          - "{{ cc_config_dir }}/genesis.ssz:/usr/app/genesis.ssz"
+          - "{{ cc_config_dir }}/config.yaml:/usr/app/config.yaml"
+          - "{{ cc_data_dir_2 }}:/usr/app/data"
+          - "{{ ec_data_dir }}/jwtsecret:/usr/app/jwtsecret:ro"
+
+    #endregion
+    #################################################################

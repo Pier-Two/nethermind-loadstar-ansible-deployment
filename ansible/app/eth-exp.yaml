@@ -1,0 +1,36 @@
+---
+- name: "Ethereum Exporter Deployment"
+  hosts: all
+  become: yes
+  gather_facts: no
+
+  tasks:
+    #################################################################
+    # Grant permissions to Google Artifact Registry
+
+    # Enables root user to pull images from google artifact registry
+    - name: Enables reading from artifact registry
+      shell: "sudo -u root gcloud auth configure-docker us-docker.pkg.dev --quiet"
+
+    #################################################################
+    # Deploy Ethereum Exporter Container
+
+    - name: Stop and remove existing Ethereum Exporter container
+      docker_container:
+        name: eth-exp
+        state: absent
+
+    - name: Ensure Ethereum Exporter container is running
+      docker_container:
+        name: eth-exp
+        image: gcr.io/avian-direction-235610/node-exporters/ethereum-exporter:{{app.docker.eth_exp.image_tag}}
+        state: started
+        restart_policy: always
+        network_mode: host
+        env: NODE_ENV="prod"
+        log_driver: json-file
+        log_options:
+          max-size: 200m
+          max-file: "3"
+
+    #################################################################

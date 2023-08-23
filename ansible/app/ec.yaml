@@ -1,0 +1,85 @@
+---
+- name: "Nethermind Execution Client Deployment"
+  hosts: all
+  become: yes
+
+  #################################################################
+  #region: Variables
+  vars:
+    ec_dir: "{{ ec_dir }}"
+    ec_data_dir: "{{ ec_dir }}/data"
+    ec_config_dir: "{{ ec_dir }}/config"
+
+    #endregion
+    #################################################################
+
+  tasks:
+    #################################################################
+    #region:  Deploy Nethermind Containername: Get Genesis Hash
+    - name: Get Genesis Hash
+      shell: |
+        curl -X POST --data '{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["0x0", true],"id":1}' -H "Content-Type: application/json" http://localhost:8545
+      register: rpc_genesis_hash
+
+    - name: Parse RPC response and store genesis hash value
+      set_fact:
+        genesis_hash: "{{ rpc_genesis_hash.stdout | from_json | json_query('result.hash') }}"
+
+    #endregion
+    #################################################################
+    #region:  Deploy Nethermind Container
+
+    - name: Stop and remove existing Execution Client Container
+      docker_container:
+        name: ec
+        state: absent
+
+    - name: Deploy Execution Client Container
+      docker_container:
+        name: ec
+        image: "nethermind/nethermind:{{app.docker.ec.image_tag}}"
+        state: started
+        restart_policy: always
+        user: "0:0"
+        network_mode: host
+        stop_timeout: 15
+        env:
+        published_ports:
+          - "0.0.0.0:1337:1337"
+          - "0.0.0.0:8545:8545"
+          - "0.0.0.0:8546:8546"
+          - "0.0.0.0:8551:8551"
+          - "0.0.0.0:9091:9091"
+          - "0.0.0.0:30303:30303"
+          - "0.0.0.0:30303:30303/udp"
+        volumes:
+          - "{{ ec_data_dir }}/jwtsecret:/nethermind/jwtsecret:rw"
+          - "{{ ec_data_dir }}/nethermind_db:/nethermind/nethermind_db"
+          - "{{ ec_data_dir }}/logs:/nethermind/logs"
+          - "{{ ec_data_dir }}/keystore:/nethermind/keystore"
+          - "{{ ec_config_dir }}/chainspec.json:/nethermind/chainspec/p2-devnet-capella.json"
+          - "{{ ec_config_dir }}/devnet.cfg:/nethermind/config/p2-devnet-capella.cfg"
+        command: [
+            --datadir=/nethermind,
+            --Pruning.Mode=Full,
+            --Pruning.FullPruningMaxDegreeOfParallelism=1,
+            --Pruning.CacheMb=2048,
+            --HealthChecks.Enabled=true,
+            --HealthChecks.UIEnabled=true,
+            --JsonRpc.Enabled=true,
+            --JsonRpc.Host=0.0.0.0,
+            --Init.WebSocketsEnabled=true,
+            --JsonRpc.WebSocketsPort=8546,
+            "--JsonRpc.EnabledModules=Eth,Subscribe,Trace,TxPool,Web3,Personal,Proof,Net,Parity,Health",
+            "--JsonRpc.AdditionalRpcUrls=http://0.0.0.0:8551|http;ws|net;eth;subscribe;engine;web3;client,http://0.0.0.0:1337|http|admin",
+            # "--JsonRpc.AdditionalRpcUrls=http://0.0.0.0:1337|http|admin",
+            --JsonRpc.JwtSecretFile=/nethermind/jwtsecret,
+            --Metrics.ExposePort=9091,
+            --Metrics.Enabled=true,
+            --config=/nethermind/config/p2-devnet-capella.cfg,
+            --Init.ChainSpecPath=/nethermind/chainspec/p2-devnet-capella.json,
+            "--Merge.TerminalBlockHash={{ genesis_hash }}",
+          ]
+
+    #endregion
+    #################################################################

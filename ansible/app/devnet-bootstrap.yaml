@@ -1,0 +1,861 @@
+---
+- name: "Ethereum Devnet Bootstrap"
+  hosts: all
+  become: yes
+
+  #################################################################
+  #region: Variables
+  vars:
+    temp_dir: "/tmp/devnet-bootstrap"
+    bin_dir: "{{ temp_dir }}/bin"
+    eth2_tg_dir: "{{ bin_dir }}/eth2-testnet-genesis"
+    mnemonic_file: "{{ temp_dir }}/mn"
+    wlt_name: "wl-piertwo-devnet-capella-1"
+    wlt_dir: "{{ temp_dir }}/wallets"
+
+    withdrawal_address: "{{ withdrawal_address }}"
+    num_validators: "{{ num_validators }}"
+    ec_dir: "{{ ec_dir }}"
+    cc_dir: "{{ cc_dir }}"
+    vc_dir: "{{ vc_dir }}"
+
+    wlt_password_file: "{{ cc_dir }}/wltpw"
+
+    chain_id_int: "{{ chain_id }}"
+
+    # withdrawal_address: "0x58Cb61E7fB7B495383389B8cC493A2473920596d"
+    # num_validators: 50
+    # ec_dir: "/blockchain/ec/nethermind"
+    # cc_dir: "/blockchain/cc/lodestar"
+    # vc_dir: "/blockchain/vc/lodestar"
+
+    ec_data_dir: "{{ ec_dir }}/data"
+    ec_config_dir: "{{ ec_dir }}/config"
+    cc_data_dir: "{{ cc_dir }}/data"
+    cc_data_dir_1: "{{ cc_data_dir }}/1"
+    cc_data_dir_2: "{{ cc_data_dir }}/2"
+    cc_config_dir: "{{ cc_dir }}/config"
+    vc_data_dir: "{{ vc_dir }}/data"
+    vc_validators_dir: "{{ vc_dir }}/validators"
+
+  tasks:
+    #endregion
+    #################################################################
+    #region:  Create Directories
+
+    - name: Create Directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: docker
+        group: docker
+        mode: 0770
+      loop:
+        - "{{ ec_dir }}"
+        - "{{ ec_data_dir }}"
+        - "{{ temp_dir }}"
+        - "{{ bin_dir }}"
+        - "{{ wlt_dir }}"
+        - "{{ cc_dir }}"
+        - "{{ cc_config_dir }}"
+        - "{{ cc_data_dir }}"
+        - "{{ cc_data_dir_1 }}"
+        - "{{ cc_data_dir_2 }}"
+        - "{{ vc_dir }}"
+        - "{{ vc_data_dir }}"
+        - "{{ vc_validators_dir }}"
+        - "{{ vc_validators_dir }}/passwords"
+
+    #endregion
+    #################################################################
+    #region:  Copy config files to server
+
+    - name: Copy EC Config Files to Server
+      ansible.builtin.copy:
+        src: ../../files/ec/config
+        dest: "{{ ec_dir }}"
+        owner: docker
+        group: docker
+        mode: 0770
+
+    - name: Copy CC Config Files to Server
+      ansible.builtin.copy:
+        src: ../../files/cc/config
+        dest: "{{ cc_dir }}"
+        owner: docker
+        group: docker
+        mode: 0770
+
+    # - name: Copy CC genesis_validators Files to Server
+    #   ansible.builtin.copy:
+    #     src: ../../files/cc/genesis_validators
+    #     dest: /blockchain/cc
+    #     owner: docker
+    #     group: docker
+    #     mode: 0770
+
+    #endregion
+    #################################################################
+    #region:  Update Timestamp Field in genesis.json and chainspec.json
+
+    - name: Set variable for current timestamp
+      set_fact:
+        current_timestamp: "{{ ansible_date_time.epoch | int }}"
+
+    - name: Set Time Variables
+      set_fact:
+        future_timestamp: "{{ current_timestamp|int + 900 }}"
+
+    - name: Set variable for minimum genesis time
+      set_fact:
+        min_genesis_time: "{{ future_timestamp|int + 50 }}"
+
+    # - name: Set variable for minimum genesis time
+    #   set_fact:
+    #     min_genesis_time: "{{ current_timestamp|int + 950 }}"
+
+    - name: Convert timestamp to hexadecimal
+      shell: "printf '%x' {{ future_timestamp }}"
+      register: hex_timestamp_output
+      changed_when: false
+
+    - name: Store hexadecimal timestamp
+      set_fact:
+        hex_timestamp: "0x{{ hex_timestamp_output.stdout.strip() }}"
+
+    # - name: Print hexadecimal timestamp
+    #   debug:
+    #     var: hex_timestamp
+
+    # - name: Read genesis.json file
+    #   ansible.builtin.set_fact:
+    #     genesis_json: "{{ lookup('file', '{{ ec_config_dir }}/genesis.json') | from_json }}"
+
+    # - name: Update genesis.json variable
+    #   ansible.utils.update_fact:
+    #     updates:
+    #       - path: timestamp
+    #         value: "{{ hex_timestamp }}"
+
+    # - name: Write updated genesis.json back to file
+    #   ansible.builtin.copy:
+    #     content: "{{ genesis_json | to_nice_json }}"
+    #     dest: {{ ec_config_dir }}/genesis.json
+
+    # Update genesis.json file timestamp
+    - name: "Update genesis.json file"
+      lineinfile:
+        path: "{{ ec_config_dir }}/genesis.json"
+        regexp: "^\\s*  \"timestamp\": "
+        line: '  "timestamp": "{{ hex_timestamp }}"'
+
+    # Update chainspec.json file timestamp
+    - name: "Update chainspec.json file"
+      lineinfile:
+        path: "{{ ec_config_dir }}/chainspec.json"
+        regexp: "^\\s*    \"timestamp\": "
+        line: '    "timestamp": "{{ hex_timestamp }}",'
+
+    #endregion
+    #################################################################
+    #region:  Create random chain ID and update files
+
+    # - name: Generate Random Chain ID
+    #   set_fact:
+    #     chain_id_int: "{{ (range(1000000, 9999999)|random)|int }}"
+
+    - name: Print Chain ID
+      debug:
+        msg: "{{ chain_id_int }}"
+
+    - name: Convert chain_id_int to hexadecimal
+      shell: "printf '%x' {{ chain_id_int }}"
+      register: chain_id_hex_output
+      changed_when: false
+
+    - name: Store hexadecimal timestamp
+      set_fact:
+        chain_id_hex: "0x{{ chain_id_hex_output.stdout.strip() }}"
+
+    - name: Print Chain ID Hexadecimal
+      debug:
+        msg: "{{ chain_id_hex }}"
+
+    - name: "Update Chain ID in genesis.json file"
+      lineinfile:
+        path: "{{ ec_config_dir }}/genesis.json"
+        regexp: "^\\s*    \"chainId\": "
+        line: '    "chainId": {{ chain_id_int }},'
+
+    - name: "Update Network ID in chainspec.json file"
+      lineinfile:
+        path: "{{ ec_config_dir }}/chainspec.json"
+        regexp: "^\\s*    \"networkID\": "
+        line: '    "networkID": "{{ chain_id_hex }}",'
+
+    - name: "Update Deposit Chain ID in config.yaml file"
+      lineinfile:
+        path: "{{ cc_config_dir }}/config.yaml"
+        regexp: "^\\s*DEPOSIT_CHAIN_ID: "
+        line: "DEPOSIT_CHAIN_ID: {{ chain_id_int }}"
+
+    - name: "Update Deposit Network ID in config.yaml file"
+      lineinfile:
+        path: "{{ cc_config_dir }}/config.yaml"
+        regexp: "^\\s*DEPOSIT_NETWORK_ID: "
+        line: "DEPOSIT_NETWORK_ID: {{ chain_id_int }}"
+
+    #endregion
+    #################################################################
+    #region:  Deploy Nethermind Container
+
+    # Create empty jwtsecret file so that the file is mounted instead of directory
+    - name: Create empty jwtsecret file if it doesn't exist
+      file:
+        path: "{{ ec_data_dir }}/jwtsecret"
+        state: touch
+        mode: 0770
+        owner: docker
+        group: docker
+
+    - name: Stop and remove existing Execution Client Container
+      docker_container:
+        name: ec
+        state: absent
+
+    - name: Deploy Execution Client Container
+      docker_container:
+        name: ec
+        image: "nethermind/nethermind:{{app.docker.ec.image_tag}}"
+        state: started
+        restart_policy: always
+        user: "0:0"
+        network_mode: host
+        stop_timeout: 15
+        env:
+        published_ports:
+          - "0.0.0.0:1337:1337"
+          - "0.0.0.0:8545:8545"
+          - "0.0.0.0:8546:8546"
+          - "0.0.0.0:8551:8551"
+          - "0.0.0.0:9091:9091"
+          - "0.0.0.0:30303:30303"
+          - "0.0.0.0:30303:30303/udp"
+        volumes:
+          - "{{ ec_data_dir }}/jwtsecret:/nethermind/jwtsecret:rw"
+          - "{{ ec_data_dir }}/nethermind_db:/nethermind/nethermind_db"
+          - "{{ ec_data_dir }}/logs:/nethermind/logs"
+          - "{{ ec_data_dir }}/keystore:/nethermind/keystore"
+          - "{{ ec_config_dir }}/chainspec.json:/nethermind/chainspec/p2-devnet-capella.json"
+          - "{{ ec_config_dir }}/devnet.cfg:/nethermind/config/p2-devnet-capella.cfg"
+        command:
+          [
+            --datadir=/nethermind,
+            --Pruning.Mode=Full,
+            --Pruning.FullPruningMaxDegreeOfParallelism=1,
+            --Pruning.CacheMb=2048,
+            --HealthChecks.Enabled=true,
+            --HealthChecks.UIEnabled=true,
+            --JsonRpc.Enabled=true,
+            --JsonRpc.Host=0.0.0.0,
+            --Init.WebSocketsEnabled=true,
+            --JsonRpc.WebSocketsPort=8546,
+            "--JsonRpc.EnabledModules=Eth,Subscribe,Trace,TxPool,Web3,Personal,Proof,Net,Parity,Health",
+            "--JsonRpc.AdditionalRpcUrls=http://0.0.0.0:8551|http;ws|net;eth;subscribe;engine;web3;client,http://0.0.0.0:1337|http|admin",
+            --JsonRpc.JwtSecretFile=/nethermind/jwtsecret,
+            --Metrics.ExposePort=9091,
+            --Metrics.Enabled=true,
+            --config=/nethermind/config/p2-devnet-capella.cfg,
+            --Init.ChainSpecPath=/nethermind/chainspec/p2-devnet-capella.json,
+          ]
+
+    #endregion
+    #################################################################
+    #region:  Get Genesis Hash
+
+    - name: Pause for 15 seconds
+      pause:
+        seconds: 15
+
+    - name: Get Genesis Hash
+      shell: |
+        curl -X POST --data '{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["0x0", true],"id":1}' -H "Content-Type: application/json" http://localhost:8545
+      register: rpc_genesis_hash
+
+    - name: Parse RPC response and store genesis hash value
+      set_fact:
+        genesis_hash: "{{ rpc_genesis_hash.stdout | from_json | json_query('result.hash') }}"
+
+    - name: Debug hash value
+      debug:
+        var: genesis_hash
+
+    #endregion
+    #################################################################
+    #region:  Update config files
+
+    # Update CC config.yaml file terminal block hash
+    - name: "Update Terminal Block Hash in CC config.yaml "
+      lineinfile:
+        path: "{{ cc_config_dir }}/config.yaml"
+        regexp: "^\\s*TERMINAL_BLOCK_HASH: "
+        line: "TERMINAL_BLOCK_HASH: {{ genesis_hash }}"
+
+    # Update CC config.yaml file minimum genesis time
+    - name: "Update Min Genesis Time in CC config.yaml"
+      lineinfile:
+        path: "{{ cc_config_dir }}/config.yaml"
+        regexp: "^\\s*MIN_GENESIS_TIME: "
+        line: "MIN_GENESIS_TIME: {{ min_genesis_time }}"
+
+    # Write Genesesis Hash to deposit_contract_block.txt
+    - name: Write Genesesis Hash to deposit_contract_block.txt
+      copy:
+        content: "{{ genesis_hash }}"
+        dest: "{{ cc_config_dir }}/deposit_contract_block.txt"
+        mode: 0770
+        owner: docker
+        group: docker
+
+    #endregion
+    #################################################################
+    #region:  Generate Wallet Password
+
+    - name: Check if password has already been generated
+      ansible.builtin.stat:
+        path: "{{ wlt_password_file }}"
+      register: password_generated
+
+    # - name: Check if password has already been copied to CC directory
+    #   ansible.builtin.stat:
+    #     path: "{{ cc_dir }}\\pw"
+    #   register: password_copied
+
+    - name: Generate password
+      ansible.builtin.shell: |
+        head -c 16 /dev/urandom | base64 | tr -dc '[:alnum:]!#$%&()*+,-./:;<=>?@[\\]^_`{|}~'
+      register: wlt_password
+      when: not password_generated.stat.exists
+
+    - name: Write password to file
+      ansible.builtin.copy:
+        content: "{{ wlt_password.stdout }}"
+        dest: "{{ wlt_password_file }}"
+        owner: root
+        group: root
+        mode: "0400"
+      when: not password_generated.stat.exists
+
+    # - name: Write password CC directory
+    #   ansible.builtin.copy:
+    #     content: "{{ wlt_password.stdout }}"
+    #     dest: "{{ cc_dir }}\\pw"
+    #     owner: root
+    #     group: root
+    #     mode: "0400"
+    #   when: not password_copied.stat.exists
+
+    #endregion
+    #################################################################
+    #region:  Download Lighthouse Binary
+
+    - name: Check if Lighthouse binary exists
+      ansible.builtin.stat:
+        path: "{{ bin_dir }}/lighthouse"
+      register: lighthouse_binary
+
+    - name: Download and Extract Lighthouse Archive
+      ansible.builtin.unarchive:
+        src: https://github.com/sigp/lighthouse/releases/download/v4.0.1/lighthouse-v4.0.1-x86_64-unknown-linux-gnu-portable.tar.gz
+        dest: "{{ bin_dir }}"
+        remote_src: yes
+        owner: docker
+        group: docker
+      when: not lighthouse_binary.stat.exists
+    #endregion
+    #################################################################
+    #region:  Create Wallet
+
+    - name: Check if wallet has already been created
+      stat:
+        path: "{{ wlt_dir }}"
+      register: wallet_dir_stats
+
+    # Create only if there aren't any directories within the wallets dir
+    - name: Create Wallet
+      ansible.builtin.shell: |
+        {{ bin_dir }}/lighthouse --network mainnet account wallet create --name {{ wlt_name }} --password-file {{ wlt_password_file }} --mnemonic-output-path {{ mnemonic_file }} --datadir {{ temp_dir }}
+      when: wallet_dir_stats.stat.isdir and not wallet_dir_stats.stat.nlink > 2
+
+    # Read password
+    - name: Read Wallet Password
+      slurp:
+        src: "{{ wlt_password_file }}"
+      register: wlt_file_contents
+
+    - name: Set Wallet Password Variable
+      set_fact:
+        wallet_password: "{{ wlt_file_contents.content | b64decode }}"
+
+    # Read Mnemonic
+    - name: Read Mnemonic
+      slurp:
+        src: "{{ mnemonic_file }}"
+      register: mnemonic_file_contents
+
+    - name: Create mnemonic variable
+      set_fact:
+        mnemonic: "{{ mnemonic_file_contents.content | b64decode }}"
+    #endregion
+    #################################################################
+    #region:  Write Mnemonic to mnemonics.yaml
+
+    - name: "Update mnemonics.yaml with generated mnemonic"
+      lineinfile:
+        path: "{{ cc_config_dir }}/mnemonics.yaml"
+        regexp: "^\\s*- mnemonic: "
+        line: '- mnemonic: "{{ mnemonic }}"'
+
+    - name: "Update mnemonics.yaml with with number of validators"
+      lineinfile:
+        path: "{{ cc_config_dir }}/mnemonics.yaml"
+        regexp: "^\\s*  count: "
+        line: "  count: {{ num_validators }} # Number of validators"
+
+    #endregion
+    #################################################################
+    #region:  Download Go Binary
+    - name: Check if Go binary exists
+      ansible.builtin.stat:
+        path: "/usr/local/go/bin/go"
+      register: go_exists
+
+    - name: Download and extract Go Archive
+      ansible.builtin.unarchive:
+        src: https://golang.org/dl/go1.20.5.linux-amd64.tar.gz
+        dest: "/usr/local"
+        remote_src: yes
+        owner: root
+        group: root
+      when: not go_exists.stat.exists
+
+    # This will make go available for users after login
+    - name: Add /usr/local/go/bin to PATH
+      lineinfile:
+        path: "~/.profile"
+        line: "export PATH=$PATH:/usr/local/go/bin"
+        create: yes
+      when: not go_exists.stat.exists
+    #endregion
+    #################################################################
+    #region:  Clone Eth2-testnet-genesis Repository
+
+    - name: Check if Eth2-testnet-genesis binary already exists
+      ansible.builtin.stat:
+        path: "{{ eth2_tg_dir }}/eth2-testnet-genesis"
+      register: eth2_tg_exists
+
+    - name: Clone Eth2-testnet-genesis Repository
+      git:
+        repo: https://github.com/protolambda/eth2-testnet-genesis.git
+        dest: "{{ eth2_tg_dir }}"
+      when: not eth2_tg_exists.stat.exists
+    #endregion
+    #################################################################
+    #region:  Make Eth2-testnet-genesis Binary
+
+    - name: Verify Go installation
+      command: go version
+      environment:
+        PATH: /sbin:/usr/sbin:/bin:/usr/bin:/usr/local/bin:/usr/local/go/bin
+      when: not eth2_tg_exists.stat.exists
+
+    - name: Make Eth2-testnet-genesis Binary
+      command: make
+      args:
+        chdir: "{{ eth2_tg_dir }}"
+      environment:
+        PATH: /sbin:/usr/sbin:/bin:/usr/bin:/usr/local/bin:/usr/local/go/bin
+      when: not eth2_tg_exists.stat.exists
+    #endregion
+    #################################################################
+    #region:  Generate the genesis.ssz file
+    - name: Generate the genesis.ssz file
+      shell: >
+        {{ eth2_tg_dir }}/eth2-testnet-genesis capella \
+          --config "{{ cc_config_dir }}/config.yaml" \
+          --eth1-config "{{ ec_config_dir }}/genesis.json" \
+          --mnemonics "{{ cc_config_dir }}/mnemonics.yaml" \
+          --state-output "{{ cc_config_dir }}/genesis.ssz" \
+          --tranches-dir "{{ cc_config_dir }}/tranches"
+
+    #endregion
+    #################################################################
+    #region:  Download Staking Deposit CLI Binary
+
+    - name: Check if staking deposit binary exists
+      ansible.builtin.stat:
+        path: "{{ bin_dir }}/deposit"
+      register: staking_deposit_binary
+
+    - name: Download and Extract Staking CLI Archive
+      ansible.builtin.unarchive:
+        src: https://github.com/ethereum/staking-deposit-cli/releases/download/v2.5.0/staking_deposit-cli-d7b5304-linux-amd64.tar.gz
+        dest: "{{ bin_dir }}"
+        remote_src: yes
+        owner: docker
+        group: docker
+        extra_opts: [--strip-components=2]
+      when: not staking_deposit_binary.stat.exists
+
+    #endregion
+    #################################################################
+    #region:  Generate Keystore files
+    - name: Generate Keystore files
+      shell: >
+        {{bin_dir}}/deposit --language English --non_interactive existing-mnemonic \
+         --num_validators {{ num_validators }} --chain mainnet \
+         --execution_address {{ withdrawal_address }} \
+         --keystore_password {{ wallet_password }} \
+         --mnemonic "{{ mnemonic }}" \
+         --validator_start_index 0 \
+         --folder "{{ vc_validators_dir }}"
+
+      #  --folder {{ temp_dir }}
+
+    ###########################################
+    # Future version to run in parallel
+
+    # - name: Run deposit command in parallel
+    #   shell: >
+    #     {{ bin_dir }}/deposit --language English --non_interactive existing-mnemonic \
+    #     --num_validators 1 --chain mainnet \
+    #     --execution_address {{ withdrawal_address }} \
+    #     --keystore_password {{ wallet_password }} \
+    #     --mnemonic "{{ mnemonic }}" \
+    #     --validator_start_index {{ item }} \
+    #     --folder "{{ vc_validators_dir }}"
+    #   loop: "{{ range(0, num_validators|int) }}"
+    #   async: 10 # Maximum number of parallel tasks
+    #   poll: 0 # Polling interval (0 means immediate return)
+    #   register: keygen_results
+
+    # - name: Wait for all deposit tasks to complete
+    #   async_status:
+    #     jid: "{{ item.ansible_job_id }}"
+    #   loop: "{{ keygen_results.results }}"
+    #   register: job_results
+    #   until: job_results.finished
+
+    # - name: Gather keygen task results
+    #   async_status:
+    #     jid: "{{ item.ansible_job_id }}"
+    #   loop: "{{ keygen_results.results }}"
+    #   register: keygen_status
+
+    # - name: Display deposit task results
+    #   debug:
+    #     msg: "Keygen task for index {{ item.item }} has result: {{ item.finished }}"
+    #   loop: "{{ keygen_status.results }}"
+
+    ###########################################
+
+    #endregion
+    #################################################################
+    #region: Create password files for each json file - Teku Requirement
+
+    # - name: Get validator key files
+    #   find:
+    #     paths: "{{ vc_validators_dir }}/validator_keys"
+    #     patterns: "keystore-*"
+    #   register: validator_files
+
+    # - name: Create password files
+    #   copy:
+    #     content: "{{ wallet_password }}"
+    #     dest: "{{ vc_validators_dir }}/passwords/{{ item.path | basename | regex_replace('\\.json$', '.txt') }}"
+    #   with_items: "{{ validator_files.files }}"
+
+    #endregion
+    #################################################################
+    #region:  Deploy Nethermind Container - Again
+
+    # Create empty jwtsecret file so that the file is mounted instead of directory
+    - name: Create empty jwtsecret file if it doesn't exist
+      file:
+        path: "{{ ec_data_dir }}/jwtsecret"
+        state: touch
+        mode: 0770
+        owner: docker
+        group: docker
+
+    - name: Stop and remove existing Execution Client Container
+      docker_container:
+        name: ec
+        state: absent
+
+    - name: Deploy Execution Client Container
+      docker_container:
+        name: ec
+        image: "nethermind/nethermind:{{app.docker.ec.image_tag}}"
+        state: started
+        restart_policy: always
+        user: "0:0"
+        network_mode: host
+        stop_timeout: 15
+        env:
+        published_ports:
+          - "0.0.0.0:1337:1337"
+          - "0.0.0.0:8545:8545"
+          - "0.0.0.0:8546:8546"
+          - "0.0.0.0:8551:8551"
+          - "0.0.0.0:9091:9091"
+          - "0.0.0.0:30303:30303"
+          - "0.0.0.0:30303:30303/udp"
+        volumes:
+          - "{{ ec_data_dir }}/jwtsecret:/nethermind/jwtsecret:rw"
+          - "{{ ec_data_dir }}/nethermind_db:/nethermind/nethermind_db"
+          - "{{ ec_data_dir }}/logs:/nethermind/logs"
+          - "{{ ec_data_dir }}/keystore:/nethermind/keystore"
+          - "{{ ec_config_dir }}/chainspec.json:/nethermind/chainspec/p2-devnet-capella.json"
+          - "{{ ec_config_dir }}/devnet.cfg:/nethermind/config/p2-devnet-capella.cfg"
+        command:
+          [
+            --datadir=/nethermind,
+            --Pruning.Mode=Full,
+            --Pruning.FullPruningMaxDegreeOfParallelism=1,
+            --Pruning.CacheMb=2048,
+            --HealthChecks.Enabled=true,
+            --HealthChecks.UIEnabled=true,
+            --JsonRpc.Enabled=true,
+            --JsonRpc.Host=0.0.0.0,
+            --Init.WebSocketsEnabled=true,
+            --JsonRpc.WebSocketsPort=8546,
+            "--JsonRpc.EnabledModules=Eth,Subscribe,Trace,TxPool,Web3,Personal,Proof,Net,Parity,Health",
+            "--JsonRpc.AdditionalRpcUrls=http://0.0.0.0:8551|http;ws|net;eth;subscribe;engine;web3;client,http://0.0.0.0:1337|http|admin",
+            --JsonRpc.JwtSecretFile=/nethermind/jwtsecret,
+            --Metrics.ExposePort=9091,
+            --Metrics.Enabled=true,
+            --config=/nethermind/config/p2-devnet-capella.cfg,
+            --Init.ChainSpecPath=/nethermind/chainspec/p2-devnet-capella.json,
+            "--Merge.TerminalBlockHash={{ genesis_hash }}",
+          ]
+
+    #endregion
+    #################################################################
+    #region:  Deploy CC Container 1
+
+    - name: Pause to allow for EC to start up
+      pause:
+        seconds: 15
+
+    - name: Deploy Consensus Client Container
+      docker_container:
+        name: cc1
+        image: "chainsafe/lodestar:{{app.docker.cc.image_tag}}"
+        network_mode: host
+        command: [
+            beacon,
+            "--execution.urls=http://{{ inventory_hostname }}:8551",
+            --jwt-secret="/usr/app/jwtsecret",
+            --dataDir="/usr/app/data",
+            --paramsFile="/usr/app/config.yaml",
+            --genesisStateFile="/usr/app/genesis.ssz",
+            --metrics=true,
+            --metrics.port=5054,
+            --metrics.address="0.0.0.0",
+            --rest=true,
+            --rest.cors='*',
+            "--rest.address={{ inventory_hostname }}",
+            --rest.port=5052,
+            --port=9000,
+            # "--rest.namespace='beacon,config,events,node,validator,lightclient'",
+            --network.allowPublishToZeroPeers=true,
+            "--enr.ip='127.0.0.1'",
+            # "--enr.ip {{ inventory_hostname }}",
+            --rest.namespace='*',
+            # --data-storage-mode=ARCHIVE,
+            # --suggestedFeeRecipient="0xCaA29806044A08E533963b2e573C1230A2cd9a2d",
+            # --metrics-host-allowlist=*,
+          ]
+        user: "0:0"
+        restart_policy: always
+        ports:
+          - "0.0.0.0:9000:9000"
+          - "0.0.0.0:5052:5052"
+          - "0.0.0.0:5054:5054"
+        volumes:
+          - "{{ cc_config_dir }}/genesis.ssz:/usr/app/genesis.ssz"
+          - "{{ cc_config_dir }}/config.yaml:/usr/app/config.yaml"
+          - "{{ cc_data_dir_1 }}:/usr/app/data"
+          - "{{ ec_data_dir }}/jwtsecret:/usr/app/jwtsecret:ro"
+
+    #endregion
+    #################################################################
+    #region:  Deploy CC Container 2
+
+    # A second CC is required for Loadstar to function
+
+    - name: Get ENR of cc1
+      shell: |
+        curl http://{{ inventory_hostname }}:5052/eth/v1/node/identity | grep -o '"enr":"[^"]*' | sed 's/"enr":"//'
+      register: cc1_enr
+
+    - name: Print ENR of cc1
+      debug:
+        msg: "{{ cc1_enr.stdout }}"
+
+    - name: Deploy Consensus Client Container
+      docker_container:
+        name: cc2
+        image: "chainsafe/lodestar:{{app.docker.cc.image_tag}}"
+        network_mode: host
+        command: [
+            beacon,
+            "--execution.urls=http://{{ inventory_hostname }}:8551",
+            --jwt-secret="/usr/app/jwtsecret",
+            --dataDir="/usr/app/data",
+            --paramsFile="/usr/app/config.yaml",
+            --genesisStateFile="/usr/app/genesis.ssz",
+            --metrics=true,
+            --metrics.port=5055,
+            --metrics.address="0.0.0.0",
+            --rest=true,
+            --rest.cors='*',
+            "--rest.address={{ inventory_hostname }}",
+            --rest.port=5053,
+            --port=9001,
+            # "--rest.namespace='beacon,config,events,node,validator,lightclient'",
+            --network.allowPublishToZeroPeers=true,
+            "--enr.ip='127.0.0.1'",
+            --network.connectToDiscv5Bootnodes=true,
+            --network.allowPublishToZeroPeers=true,
+            "--bootnodes={{ cc1_enr.stdout }}",
+            # "--enr.ip {{ inventory_hostname }}",
+            --rest.namespace='*',
+            # --data-storage-mode=ARCHIVE,
+            # --suggestedFeeRecipient="0xCaA29806044A08E533963b2e573C1230A2cd9a2d",
+            # --metrics-host-allowlist=*,
+          ]
+        user: "0:0"
+        restart_policy: always
+        ports:
+          - "0.0.0.0:9001:9001"
+          - "0.0.0.0:5053:5053"
+          - "0.0.0.0:5055:5055"
+        volumes:
+          - "{{ cc_config_dir }}/genesis.ssz:/usr/app/genesis.ssz"
+          - "{{ cc_config_dir }}/config.yaml:/usr/app/config.yaml"
+          - "{{ cc_data_dir_2 }}:/usr/app/data"
+          - "{{ ec_data_dir }}/jwtsecret:/usr/app/jwtsecret:ro"
+
+    #endregion
+    #################################################################
+    #region:  Deploy VC Container
+
+    - name: Stop and remove existing Validator Client Container
+      docker_container:
+        name: vc
+        state: absent
+
+    - name: Deploy Validator Client Container
+      docker_container:
+        name: vc
+        image: "chainsafe/lodestar:{{app.docker.cc.image_tag}}"
+        network_mode: host
+        command: [
+            validator,
+            # "--execution.urls=http://{{ inventory_hostname }}:8551",
+            # --jwt-secret="/usr/app/jwtsecret",
+            --dataDir="/usr/app/data",
+            --paramsFile="/usr/app/config.yaml",
+            "--beacon-nodes='{{ inventory_hostname }}:5052'",
+            # --genesisStateFile="/usr/app/genesis.ssz",
+            --metrics=true,
+            --metrics.port=5064,
+            --metrics.address="0.0.0.0",
+            # --rest.namespace='*',
+            # --rest.cors='*',
+            # "--rest.address={{ inventory_hostname }}",
+            # --rest.port=5052,
+            # --port=9000,
+            --importKeystores="/opt/lodestar/validators/validator_keys",
+            --importKeystoresPassword="/usr/app/pw",
+            # "--rest.namespace=['beacon','config','events','node','validator','lightclient']",
+
+          ]
+        # Validator api, to be enabled later: need to create a key and password
+        # --validator-api-keystore-file=<keystoreFile>
+        # Keystore used for ssl for the validator api.
+        # --validator-api-keystore-password-file=<keystorePasswordFile>
+        # Password used to decrypt the keystore for the validator api.
+        # --validator-api-enabled=true,
+        # --validator-api-cors-origins=*,
+        # --validator-api-host-allowlist=*,
+        # --validator-api-interface=0.0.0.0,
+        # --validator-api-port=5062,
+        user: "0:0"
+        restart_policy: always
+        ports:
+          - "0.0.0.0:5062:5062"
+          - "0.0.0.0:5064:5064"
+        volumes:
+          - "{{ vc_validators_dir }}:/opt/lodestar/validators"
+          - "{{ vc_data_dir }}:/usr/app/data"
+          - "{{ wlt_password_file }}:/usr/app/pw:ro"
+          - "{{ cc_config_dir }}/config.yaml:/usr/app/config.yaml"
+
+    # lodestar validator-client \
+    # --data-path=./lodestar-datadir \
+    # --network=./config.yaml \
+    # --beacon-node-api-endpoint=http://127.0.0.1:5051 \
+    # --validator-keys=./genesis_validators/validator_keys:./genesis_validators/passwords \
+    # --validators-proposer-default-fee-recipient=0x58Cb61E7fB7B495383389B8cC493A2473920596d
+
+    #endregion
+    #################################################################
+    #region: Verify Deployment: Confirm Block Hash and Genesis Hash Match
+
+    - name: Pause for 15 seconds
+      pause:
+        seconds: 15
+
+    - name: Get Block Hash
+      shell: |
+        curl http://{{ inventory_hostname }}:5052/eth/v2/debug/beacon/states/head | grep -o '"block_hash":"[^"]*' | cut -d'"' -f4 | head -n1
+      register: block_hash
+
+    - name: Print Block Hash
+      debug:
+        msg: "{{ block_hash.stdout }}"
+
+    - name: Print Genesis Hash
+      debug:
+        msg: "{{ genesis_hash }}"
+
+    - name: Compare Block Hash and Genesis Hash
+      assert:
+        that:
+          - block_hash.stdout == genesis_hash
+        fail_msg: "Block Hash and Genesis Hash do not match."
+
+    #endregion
+    #################################################################
+    #region: Get Chain ID
+    # Output the Chain ID for visual confirmation
+
+    - name: Get Chain ID
+      shell: |
+        curl -X POST --data '{"jsonrpc":"2.0","method":"net_version","params":[],"id":1}' -H "Content-Type: application/json" http://{{ inventory_hostname }}:8545
+      register: chain_id_rpc
+
+    # - name: Parse RPC response and store genesis hash value
+    #   set_fact:
+    #     genesis_hash: "{{ rpc_genesis_hash.stdout | from_json | json_query('result.hash') }}"
+
+    - name: Print Chain ID
+      debug:
+        msg: "{{ chain_id_rpc.stdout | from_json | json_query('result') }}"
+
+    #endregion
+    #################################################################

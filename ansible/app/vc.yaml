@@ -1,0 +1,91 @@
+---
+- name: "Validator Client Deployment"
+  hosts: all
+  become: yes
+
+  #################################################################
+  #region: Variables
+  vars:
+    cc_dir: "{{ cc_dir }}"
+    vc_dir: "{{ vc_dir }}"
+
+    cc_config_dir: "{{ cc_dir }}/config"
+    wlt_password_file: "{{ cc_dir }}/wltpw"
+
+    vc_data_dir: "{{ vc_dir }}/data"
+    vc_validators_dir: "{{ vc_dir }}/validators"
+    vc_api_dir: "{{ vc_dir }}/api"
+
+    withdrawal_address: "{{ withdrawal_address }}"
+
+  tasks:
+    #endregion
+    #################################################################
+    #region:  Deploy VC Container
+
+    - name: Stop and remove existing Validator Client Container
+      docker_container:
+        name: vc
+        state: absent
+
+    - name: Deploy Validator Client Container
+      docker_container:
+        name: vc
+        image: "chainsafe/lodestar:{{app.docker.cc.image_tag}}"
+        network_mode: host
+        command: [
+            validator,
+            --dataDir="/usr/app/data",
+            --paramsFile="/usr/app/config.yaml",
+            "--beacon-nodes='http://{{ inventory_hostname }}:5052,http://{{ inventory_hostname }}:5053'",
+            --metrics=true,
+            --metrics.port=5064,
+            --metrics.address="0.0.0.0",
+            --importKeystores="/opt/lodestar/validators/validator_keys",
+            --importKeystoresPassword="/usr/app/pw",
+            # Validator api
+            --keymanager,
+            --keymanager.authEnabled=true,
+            --keymanager.port=5062,
+            "--keymanager.address=0.0.0.0",
+            # --validator-api-keystore-file="/usr/app/api/keystore",
+            # --validator-api-keystore-password-file="/usr/app/api/pw",
+            # --validator-api-enabled=true,
+            # "--validator-api-cors-origins='*'",
+            # "--validator-api-host-allowlist='*'",
+            # "--validator-api-interface=0.0.0.0",
+            # --validator-api-port=5062,
+            # Other
+            # "--rest.namespace=['beacon','config','events','node','validator','lightclient']",
+            # --jwt-secret="/usr/app/jwtsecret",
+            # --rest.namespace='*',
+            # --rest.cors='*',
+            # "--rest.address={{ inventory_hostname }}",
+            # --rest.port=5052,
+            # --port=9000,
+            # --genesisStateFile="/usr/app/genesis.ssz",
+
+          ]
+     
+        user: "0:0"
+        restart_policy: always
+        ports:
+          - "0.0.0.0:5062:5062"
+          - "0.0.0.0:5064:5064"
+        volumes:
+          - "{{ vc_validators_dir }}:/opt/lodestar/validators"
+          - "{{ vc_data_dir }}:/usr/app/data"
+          - "{{ vc_api_dir }}:/usr/app/api"
+          - "{{ wlt_password_file }}:/usr/app/pw:ro"
+          - "{{ cc_config_dir }}/config.yaml:/usr/app/config.yaml"
+          # - "{{ ec_data_dir }}/jwtsecret:/usr/app/jwtsecret:ro"
+
+    # lodestar validator-client \
+    # --data-path=./lodestar-datadir \
+    # --network=./config.yaml \
+    # --beacon-node-api-endpoint=http://127.0.0.1:5051 \
+    # --validator-keys=./genesis_validators/validator_keys:./genesis_validators/passwords \
+    # --validators-proposer-default-fee-recipient=0x58Cb61E7fB7B495383389B8cC493A2473920596d
+
+    #endregion
+    #################################################################
